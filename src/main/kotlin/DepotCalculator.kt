@@ -49,3 +49,11 @@ fun calculateDepot(vehicleNumber: String, isTram: Boolean): String {
 fun calculateExpectedEnd(lines: String): String {
     return "Trasa linii $lines (Wymaga GTFS)"
 }
+// --- NARZĘDZIE ADMINISTRACYJNE ---
+// Zwraca posortowaną listę numerów tramwajów, które mają status UA / Nieokreślona
+fun getUnknownTramsList(): List<String> {
+    return tramDepotMap
+        .filter { it.value == "Nieokreślona (do uzupełnienia)" }
+        .map { it.key }
+        .sorted()
+}
