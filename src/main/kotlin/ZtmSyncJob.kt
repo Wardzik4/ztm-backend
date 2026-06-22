@@ -4,6 +4,7 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.plugins.HttpTimeout // <-- WAŻNY NOWY IMPORT!
 import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
@@ -11,11 +12,17 @@ import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.deleteAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import java.util.concurrent.ConcurrentHashMap // <-- WAŻNY IMPORT!
+import java.util.concurrent.ConcurrentHashMap
 
+// Zaktualizowany klient HTTP z długim czasem oczekiwania!
 val httpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
+    }
+    install(HttpTimeout) {
+        requestTimeoutMillis = 60000L // Czekamy aż 60 sekund na ZTM
+        connectTimeoutMillis = 60000L
+        socketTimeoutMillis = 60000L
     }
 }
 
