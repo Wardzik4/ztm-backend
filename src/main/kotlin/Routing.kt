@@ -34,18 +34,6 @@ fun Application.configureRouting() {
     routing {
         get("/") { call.respondText("Serwer ZTM działa!") }
 
-        // --- TWÓJ UKRYTY PANEL ADMINISTRACYJNY ---
-        get("/api/admin/unknown-trams") {
-            val unknownList = getUnknownTramsList()
-
-            // ZMIANA: Używamy naszej nowej, bezpiecznej klasy!
-            val response = AdminUnknownTramsResponse(
-                totalMissing = unknownList.size,
-                missingVehicles = unknownList
-            )
-
-            call.respond(response)
-        }
 
         get("/api/route/{number}") {
             val number = call.parameters["number"] ?: return@get call.respondText("Brak numeru!")
