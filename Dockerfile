@@ -1,14 +1,19 @@
-# ETAP 1: Budowanie naszej aplikacji używając Gradle i Javy 21
-FROM gradle:8.5-jdk21 AS build
-COPY --chown=gradle:gradle . /home/gradle/src
-WORKDIR /home/gradle/src
-RUN gradle installDist --no-daemon
+# ETAP 1: Budowanie z użyciem oficjalnego JDK 21
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /app
+# Kopiujemy wszystkie pliki projektu
+COPY . .
+# Nadajemy systemowe uprawnienia do uruchomienia skryptu (bardzo częsty problem Windows -> Linux)
+RUN chmod +x ./gradlew
+# Odpalamy dokładnie to samo narzędzie, które używa IntelliJ
+RUN ./gradlew installDist --no-daemon
 
-# ETAP 2: Pakowanie gotowej aplikacji do lekkiego kontenera
+# ETAP 2: Lekki kontener do samego działania serwera
 FROM eclipse-temurin:21-jre
 EXPOSE 8080
 WORKDIR /app
-COPY --from=build /home/gradle/src/build/install/ /app/
+# Przerzucamy zbudowany program
+COPY --from=build /app/build/install/ /app/
 
-# Automatycznie znajdujemy plik startowy (ignorując windowsowe pliki .bat) i go uruchamiamy!
+# Automatyczne odpalenie
 CMD ["sh", "-c", "find . -type f -path '*/bin/*' ! -name '*.bat' -exec {} \\;"]
