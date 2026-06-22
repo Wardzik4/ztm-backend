@@ -10,7 +10,7 @@ fun main(args: Array<String>) {
     val dbPassword = System.getenv("DB_PASSWORD") ?: "HKASrT9Ig5TsyJ73"
 
     Database.connect(
-        url = "jdbc:postgresql://db.kcqncvrccpfsqcqowdak.supabase.co:5432/postgres",
+        url = "jdbc:postgresql://db.kcqncvrccpfsqcqowdak.supabase.co:5432/postgres?sslmode=require",
         driver = "org.postgresql.Driver",
         user = "postgres",
         password = dbPassword // Używamy zmiennej!
