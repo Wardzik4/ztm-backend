@@ -11,56 +11,60 @@ import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.deleteAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import java.util.concurrent.ConcurrentHashMap // <-- WAŻNY IMPORT!
 
-// Klient HTTP dla serwera
 val httpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
     }
 }
 
-fun startZtmSyncJob() {
+// 🔥 PAMIĘĆ RAM SERWERA (Błyskawiczny Cache)
+val liveGpsCache = ConcurrentHashMap<String, VehicleDto>()
+
+fun startBackgroundJobs() {
     val ztmApiKey = System.getenv("ZTM_API_KEY") ?: ""
 
+    // 1. SZYBKI PRACOWNIK: Pobiera GPS co 15 sekund i trzyma go w pamięci RAM!
     CoroutineScope(Dispatchers.IO).launch {
         while (isActive) {
             try {
-                println("🔄 [CRON JOB] Pobieram PRAWIDZIWE dane z ZTM Warszawa...")
-
-                // 1. Pobieramy autobusy
-                val busesResponse: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
+                val buses: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
                     parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
                     parameter("apikey", ztmApiKey)
                     parameter("type", 1)
                 }.body()
 
-                // 2. Pobieramy tramwaje
-                val tramsResponse: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
+                val trams: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
                     parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
                     parameter("apikey", ztmApiKey)
                     parameter("type", 2)
                 }.body()
 
-                // Filtrujemy śmieci (np. puste numery) i usuwamy DUPLIKATY z ZTM!
-                val allBuses = busesResponse.result
-                    .filter { it.vehicleNumber.isNotBlank() && it.vehicleNumber != "Brak" }
-                    .distinctBy { it.vehicleNumber }
+                // Bezpiecznie zapisujemy najnowszy GPS do Pamięci RAM
+                buses.result.forEach { if(it.vehicleNumber.isNotBlank()) liveGpsCache["B-${it.vehicleNumber.take(10)}"] = it }
+                trams.result.forEach { if(it.vehicleNumber.isNotBlank()) liveGpsCache["T-${it.vehicleNumber.take(10)}"] = it }
 
-                val allTrams = tramsResponse.result
-                    .filter { it.vehicleNumber.isNotBlank() && it.vehicleNumber != "Brak" }
-                    .distinctBy { it.vehicleNumber }
+            } catch (e: Exception) { println("❌ Błąd szybkiego GPS: ${e.message}") }
+            delay(15 * 1000L) // Czekamy 15 sekund!
+        }
+    }
 
-                println("📡 Pobrane z GPS: Autobusów: ${allBuses.size}, Tramwajów: ${allTrams.size}")
+    // 2. WOLNY PRACOWNIK: Co 10 minut bierze to co jest w RAMie i zapisuje do Supabase
+    CoroutineScope(Dispatchers.IO).launch {
+        while (isActive) {
+            try {
+                delay(5000L) // Dajemy szybkiemu 5 sekund na pierwsze pobranie przy starcie
 
-                // 3. Masowy zapis do Supabase!
+                // Wyciągamy z RAM-u unikalne pojazdy
+                val allBuses = liveGpsCache.filterKeys { it.startsWith("B-") }.values.distinctBy { it.vehicleNumber }
+                val allTrams = liveGpsCache.filterKeys { it.startsWith("T-") }.values.distinctBy { it.vehicleNumber }
+
                 transaction {
-                    println("🗑️ Czyszczę starą bazę Supabase...")
                     VehicleRoutes.deleteAll()
 
-                    println("💾 Wrzucam autobusy do bazy...")
                     VehicleRoutes.batchInsert(allBuses) { bus ->
-                        // Używamy .take(10) by uciąć ew. śmieci z ZTM powyżej 10 znaków
-                        this[VehicleRoutes.vehicleNumber] = ("B-" + bus.vehicleNumber).take(10)
+                        this[VehicleRoutes.vehicleNumber] = "B-${bus.vehicleNumber.take(10)}"
                         this[VehicleRoutes.loopName] = calculateExpectedEnd(bus.lines)
                         this[VehicleRoutes.loopLat] = bus.lat
                         this[VehicleRoutes.loopLon] = bus.lon
@@ -68,13 +72,11 @@ fun startZtmSyncJob() {
                         this[VehicleRoutes.depotName] = calculateDepot(bus.vehicleNumber, isTram = false)
                         this[VehicleRoutes.depotLat] = 0.0
                         this[VehicleRoutes.depotLon] = 0.0
-                        // ZMIANA: Skracamy tekst, by zmieścił się w 10 znakach!
                         this[VehicleRoutes.depotTime] = "Zjazd"
                     }
 
-                    println("💾 Wrzucam tramwaje do bazy...")
                     VehicleRoutes.batchInsert(allTrams) { tram ->
-                        this[VehicleRoutes.vehicleNumber] = ("T-" + tram.vehicleNumber).take(10)
+                        this[VehicleRoutes.vehicleNumber] = "T-${tram.vehicleNumber.take(10)}"
                         this[VehicleRoutes.loopName] = calculateExpectedEnd(tram.lines)
                         this[VehicleRoutes.loopLat] = tram.lat
                         this[VehicleRoutes.loopLon] = tram.lon
@@ -82,20 +84,13 @@ fun startZtmSyncJob() {
                         this[VehicleRoutes.depotName] = calculateDepot(tram.vehicleNumber, isTram = true)
                         this[VehicleRoutes.depotLat] = 0.0
                         this[VehicleRoutes.depotLon] = 0.0
-                        // ZMIANA: Tutaj też
                         this[VehicleRoutes.depotTime] = "Zjazd"
                     }
                 }
+                println("✅ Baza Supabase zaktualizowana!")
+            } catch(e: Exception) { println("❌ Błąd bazy Supabase: ${e.message}") }
 
-                println("✅ [CRON JOB] Baza zaktualizowana PRAWIDZIWYMI danymi!")
-
-            } catch (e: Exception) {
-                println("❌ [CRON JOB] Błąd pobierania ZTM: ${e.message}")
-            }
-
-            // Odświeżamy dane np. co 10 minut (10 * 60 * 1000)
-            println("⏳ [CRON JOB] Czekam 10 minut na kolejne pobranie GPS...")
-            delay(10 * 60 * 1000L)
+            delay(10 * 60 * 1000L) // 10 minut snu
         }
     }
 }

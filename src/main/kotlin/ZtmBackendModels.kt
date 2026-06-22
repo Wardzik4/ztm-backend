@@ -17,3 +17,21 @@ data class VehicleDto(
     @SerialName("Time") val time: String = "Brak",
     @SerialName("Brigade") val brigade: String = "Brak"
 )
+// NOWOŚĆ: Klasa, która łączy GPS i Zajezdnię w jedno!
+@Serializable
+data class UnifiedVehicleResponse(
+    val vehicleNumber: String,
+    val isTram: Boolean,
+    val lines: String,
+    val lat: Double,
+    val lon: Double,
+    val time: String,
+    val loopName: String,
+    val loopLat: Double,
+    val loopLon: Double,
+    val breakMinutes: Int,
+    val depotName: String,
+    val depotLat: Double,
+    val depotLon: Double,
+    val depotTime: String
+)
