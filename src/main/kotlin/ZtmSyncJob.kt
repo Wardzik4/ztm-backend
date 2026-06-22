@@ -1,71 +1,101 @@
 package com.wardzik
 
+import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.request.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.deleteAll
-import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
 
-fun startZtmSyncJob() {
-    // Odpalamy nowy, niezależny wątek w tle (Dispatchers.IO jest idealny do bazy danych i sieci)
-    CoroutineScope(Dispatchers.IO).launch {
-
-        // Nieskończona pętla - serwer na Renderze nigdy jej nie przerwie
-        while (isActive) {
-            try {
-                println("🔄 [CRON JOB] Rozpoczynam synchronizację danych z ZTM...")
-
-                fetchAndSaveZtmData()
-
-                println("✅ [CRON JOB] Baza zaktualizowana pomyślnie!")
-            } catch (e: Exception) {
-                println("❌ [CRON JOB] Błąd synchronizacji: ${e.message}")
-            }
-
-            println("⏳ [CRON JOB] Idę spać na 24 godziny...")
-            // Usypiamy wątek na 24 godziny (24h * 60m * 60s * 1000ms)
-            // Do testów możesz tu wpisać np. delay(60 * 1000L) żeby odpalało się co minutę!
-            delay(24 * 60 * 60 * 1000L)
-        }
+// Klient HTTP dla serwera
+val httpClient = HttpClient(CIO) {
+    install(ContentNegotiation) {
+        json(Json { ignoreUnknownKeys = true })
     }
 }
 
-suspend fun fetchAndSaveZtmData() {
-    // 1. TUTAJ W PRZYSZŁOŚCI UDERZYMY DO ZTM API PO ROZKŁADY
-    // Na ten moment symulujemy, że parser pobrał i przetworzył listę pojazdów
+fun startZtmSyncJob() {
+    val ztmApiKey = System.getenv("ZTM_API_KEY") ?: "f901d0f5-52ec-4ee4-9bda-4adba28752db"
 
-    val parsedDataFromZtm = listOf(
-        // Aktualizujemy dane dla 1000 (np. zmienił trasę na nowy dzień)
-        mapOf(
-            "number" to "1000", "loop" to "Gocław (Nowa pętla!)", "brk" to 25,
-            "dep" to "Zajezdnia Ostrobramska", "time" to "23:40"
-        ),
-        // Dorzucamy całkowicie nowy pojazd, którego wcześniej nie było!
-        mapOf(
-            "number" to "3333", "loop" to "Metro Wilanowska", "brk" to 10,
-            "dep" to "Zajezdnia Mokotów", "time" to "00:15"
-        )
-    )
+    CoroutineScope(Dispatchers.IO).launch {
+        while (isActive) {
+            try {
+                println("🔄 [CRON JOB] Pobieram PRAWIDZIWE dane z ZTM Warszawa...")
 
-    // 2. OPERACJE NA BAZIE DANYCH (SUPABASE)
-    // Transaction oznacza: "Zrób to wszystko, a jak coś wybuchnie, cofnij zmiany"
-    transaction {
+                // 1. Pobieramy autobusy
+                val busesResponse: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
+                    parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
+                    parameter("apikey", ztmApiKey)
+                    parameter("type", 1)
+                }.body()
 
-        println("🗑️ Usuwam stare rozkłady z wczoraj...")
-        VehicleRoutes.deleteAll() // Czyścimy starą tabelę!
+                // 2. Pobieramy tramwaje
+                val tramsResponse: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
+                    parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
+                    parameter("apikey", ztmApiKey)
+                    parameter("type", 2)
+                }.body()
 
-        println("💾 Zapisuję nowe rozkłady do bazy...")
-        parsedDataFromZtm.forEach { data ->
-            VehicleRoutes.insert {
-                it[vehicleNumber] = data["number"] as String
-                it[loopName] = data["loop"] as String
-                it[loopLat] = 52.22 // dla uproszczenia stałe GPS
-                it[loopLon] = 21.01
-                it[breakMinutes] = data["brk"] as Int
-                it[depotName] = data["dep"] as String
-                it[depotLat] = 52.20
-                it[depotLon] = 21.05
-                it[depotTime] = data["time"] as String
+                // Filtrujemy śmieci (np. puste numery) i usuwamy DUPLIKATY z ZTM!
+                val allBuses = busesResponse.result
+                    .filter { it.vehicleNumber.isNotBlank() && it.vehicleNumber != "Brak" }
+                    .distinctBy { it.vehicleNumber }
+
+                val allTrams = tramsResponse.result
+                    .filter { it.vehicleNumber.isNotBlank() && it.vehicleNumber != "Brak" }
+                    .distinctBy { it.vehicleNumber }
+
+                println("📡 Pobrane z GPS: Autobusów: ${allBuses.size}, Tramwajów: ${allTrams.size}")
+
+                // 3. Masowy zapis do Supabase!
+                transaction {
+                    println("🗑️ Czyszczę starą bazę Supabase...")
+                    VehicleRoutes.deleteAll()
+
+                    println("💾 Wrzucam autobusy do bazy...")
+                    VehicleRoutes.batchInsert(allBuses) { bus ->
+                        // Używamy .take(10) by uciąć ew. śmieci z ZTM powyżej 10 znaków
+                        this[VehicleRoutes.vehicleNumber] = ("B-" + bus.vehicleNumber).take(10)
+                        this[VehicleRoutes.loopName] = calculateExpectedEnd(bus.lines)
+                        this[VehicleRoutes.loopLat] = bus.lat
+                        this[VehicleRoutes.loopLon] = bus.lon
+                        this[VehicleRoutes.breakMinutes] = (5..15).random()
+                        this[VehicleRoutes.depotName] = calculateDepot(bus.vehicleNumber, isTram = false)
+                        this[VehicleRoutes.depotLat] = 0.0
+                        this[VehicleRoutes.depotLon] = 0.0
+                        // ZMIANA: Skracamy tekst, by zmieścił się w 10 znakach!
+                        this[VehicleRoutes.depotTime] = "Zjazd"
+                    }
+
+                    println("💾 Wrzucam tramwaje do bazy...")
+                    VehicleRoutes.batchInsert(allTrams) { tram ->
+                        this[VehicleRoutes.vehicleNumber] = ("T-" + tram.vehicleNumber).take(10)
+                        this[VehicleRoutes.loopName] = calculateExpectedEnd(tram.lines)
+                        this[VehicleRoutes.loopLat] = tram.lat
+                        this[VehicleRoutes.loopLon] = tram.lon
+                        this[VehicleRoutes.breakMinutes] = (5..20).random()
+                        this[VehicleRoutes.depotName] = calculateDepot(tram.vehicleNumber, isTram = true)
+                        this[VehicleRoutes.depotLat] = 0.0
+                        this[VehicleRoutes.depotLon] = 0.0
+                        // ZMIANA: Tutaj też
+                        this[VehicleRoutes.depotTime] = "Zjazd"
+                    }
+                }
+
+                println("✅ [CRON JOB] Baza zaktualizowana PRAWIDZIWYMI danymi!")
+
+            } catch (e: Exception) {
+                println("❌ [CRON JOB] Błąd pobierania ZTM: ${e.message}")
             }
+
+            // Odświeżamy dane np. co 10 minut (10 * 60 * 1000)
+            println("⏳ [CRON JOB] Czekam 10 minut na kolejne pobranie GPS...")
+            delay(10 * 60 * 1000L)
         }
     }
 }
