@@ -20,7 +20,7 @@ val httpClient = HttpClient(CIO) {
 }
 
 fun startZtmSyncJob() {
-    val ztmApiKey = System.getenv("ZTM_API_KEY") ?: "f901d0f5-52ec-4ee4-9bda-4adba28752db"
+    val ztmApiKey = System.getenv("ZTM_API_KEY") ?: ""
 
     CoroutineScope(Dispatchers.IO).launch {
         while (isActive) {
