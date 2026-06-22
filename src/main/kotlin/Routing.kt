@@ -6,6 +6,12 @@ import io.ktor.server.routing.*
 import org.jetbrains.exposed.sql.Database // <-- PAMIĘTAJ O TYM IMPORCIE
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
+import kotlinx.serialization.Serializable
+@Serializable
+data class AdminUnknownTramsResponse(
+    val totalMissing: Int,
+    val missingVehicles: List<String>
+)
 
 fun Application.configureRouting() {
 
@@ -32,11 +38,12 @@ fun Application.configureRouting() {
         get("/api/admin/unknown-trams") {
             val unknownList = getUnknownTramsList()
 
-            // Zwracamy ładnego JSON-a z ilością braków i dokładną listą numerów!
-            val response = mapOf(
-                "total_missing" to unknownList.size,
-                "missing_vehicles" to unknownList
+            // ZMIANA: Używamy naszej nowej, bezpiecznej klasy!
+            val response = AdminUnknownTramsResponse(
+                totalMissing = unknownList.size,
+                missingVehicles = unknownList
             )
+
             call.respond(response)
         }
 
