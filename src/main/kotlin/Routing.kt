@@ -56,4 +56,5 @@ fun Application.configureRouting() {
             }
         }
     }
+    startZtmSyncJob()
 }

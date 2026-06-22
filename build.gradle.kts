@@ -35,4 +35,9 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-core:0.45.0")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.45.0")
     implementation("org.postgresql:postgresql:42.7.2")
+
+    // Ktor Client (do pobierania danych z ZTM przez backend)
+    implementation("io.ktor:ktor-client-core-jvm")
+    implementation("io.ktor:ktor-client-cio-jvm")
+    implementation("io.ktor:ktor-client-content-negotiation-jvm")
 }
