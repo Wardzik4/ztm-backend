@@ -9,14 +9,17 @@ import org.jetbrains.exposed.sql.transactions.transaction
 
 fun Application.configureRouting() {
 
-    // --- PRZENIESIONE Z MAIN.KT ---
-    // Pobieramy hasło i łączymy się z bazą ZANIM włączymy ścieżki
     val dbPassword = System.getenv("DB_PASSWORD") ?: "HKASrT9Ig5TsyJ73"
 
     Database.connect(
-        url = "jdbc:postgresql://db.kcqncvrccpfsqcqowdak.supabase.co:5432/postgres?sslmode=require",
+        // Zwróć uwagę na host: aws-1...pooler oraz port: 5432
+        url = "jdbc:postgresql://aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require",
+
         driver = "org.postgresql.Driver",
-        user = "postgres",
+
+        // Wyciągnięty nowy użytkownik z Twojego linku:
+        user = "postgres.kcqncvrccpfsqcqowdak",
+
         password = dbPassword
     )
     println("✅ Podłączono do Supabase!")
