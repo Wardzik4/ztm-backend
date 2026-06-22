@@ -7,6 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.HttpTimeout // <-- WAŻNY NOWY IMPORT!
 import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.http.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.batchInsert
@@ -36,16 +37,24 @@ fun startBackgroundJobs() {
     CoroutineScope(Dispatchers.IO).launch {
         while (isActive) {
             try {
+                // 1. Pobieranie autobusów (z maską Chrome'a!)
                 val buses: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
                     parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
                     parameter("apikey", ztmApiKey)
                     parameter("type", 1)
+                    // ZAKŁADAMY MASKĘ NORMALNEJ PRZEGLĄDARKI
+                    header(HttpHeaders.UserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    header(HttpHeaders.Accept, "application/json")
                 }.body()
 
+                // 2. Pobieranie tramwajów
                 val trams: ZtmLiveLocationResponse = httpClient.get("https://api.um.warszawa.pl/api/action/busestrams_get/") {
                     parameter("resource_id", "f2e5503e-927d-4ad3-9500-4ab9e55deb59")
                     parameter("apikey", ztmApiKey)
                     parameter("type", 2)
+                    // ZAKŁADAMY MASKĘ
+                    header(HttpHeaders.UserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    header(HttpHeaders.Accept, "application/json")
                 }.body()
 
                 // Bezpiecznie zapisujemy najnowszy GPS do Pamięci RAM
